@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local virtual env
+venv/
+.venv/
+
+# Local telemetry/session artifacts
+data/session_output/
+*.parquet
+data/benchmarks/*.sqlite
+
+# Frontend build artifacts
+web/dashboard/node_modules/
+web/dashboard/dist/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Temp files
+*.tmp
+*.log
+.tmp_*
