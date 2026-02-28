@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import csv
+import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from ai_driving_coach.analysis.benchmark_analyzer import BenchmarkAnalyzer
 from ai_driving_coach.analysis.session_timing import SessionTimingAnalyzer
@@ -60,6 +63,7 @@ class CoachingApp:
             condition=self.config.benchmark_condition,
         )
         self.dashboard_state, self.dashboard_server = self._build_dashboard()
+        self._load_persisted_lap_history()
         self.dashboard_state.update_timing(self.session_timing.snapshot())
         self.dashboard_state.set_benchmark_reference(None)
         self.overlay = self._build_overlay()
@@ -178,6 +182,118 @@ class CoachingApp:
             width=self.config.overlay_width,
             height=self.config.overlay_height,
         )
+
+    def _load_persisted_lap_history(self) -> None:
+        pattern = re.compile(r"^lap_(\d+)_ticks\.csv$")
+        output_dir = Path(self.config.output_dir)
+        if not output_dir.exists():
+            return
+
+        lap_files: list[tuple[int, Path]] = []
+        for file_path in output_dir.glob("lap_*_ticks.csv"):
+            match = pattern.match(file_path.name)
+            if not match:
+                continue
+            lap_files.append((int(match.group(1)), file_path))
+
+        if not lap_files:
+            return
+
+        lap_files.sort(key=lambda item: item[0])
+        lap_files = lap_files[-12:]
+
+        history_rows: list[tuple[int, float, int, str | None, str | None]] = []
+        for lap_number, ticks_csv in lap_files:
+            lap_time_s, track_name, car_name, is_complete = self._read_lap_meta_from_ticks_csv(ticks_csv)
+            if lap_time_s is None or lap_time_s <= 0.0 or not is_complete:
+                continue
+            features_count = self._count_feature_rows(lap_number)
+            history_rows.append((lap_number, lap_time_s, features_count, track_name, car_name))
+
+        if not history_rows:
+            return
+
+        best_lap_number, best_lap_time_s, _, _, _ = min(history_rows, key=lambda row: row[1])
+        self.session_timing.best_lap_time_s = best_lap_time_s
+        self.session_timing.best_lap_number = best_lap_number
+
+        for lap_number, lap_time_s, features_count, track_name, car_name in history_rows:
+            is_best = lap_number == best_lap_number
+            self.dashboard_state.add_lap_result(
+                lap_number=lap_number,
+                lap_time_s=lap_time_s,
+                is_best_lap=is_best,
+                delta_to_best_lap_s=lap_time_s - best_lap_time_s,
+                summary=["Historico carregado de disco."],
+                features_count=features_count,
+                track_name=track_name,
+                car_name=car_name,
+            )
+        print(f"[HISTORY] carregadas {len(history_rows)} voltas de {output_dir}.")
+
+    def _read_lap_meta_from_ticks_csv(self, csv_path: Path) -> tuple[float | None, str | None, str | None, bool]:
+        best_guess: float | None = None
+        track_name: str | None = None
+        car_name: str | None = None
+        min_spline: float | None = None
+        max_spline: float | None = None
+        try:
+            with csv_path.open("r", encoding="utf-8", newline="") as fp:
+                reader = csv.DictReader(fp)
+                for row in reader:
+                    if track_name is None:
+                        raw_track = (row.get("track_name") or "").strip()
+                        if raw_track:
+                            track_name = raw_track
+                    if car_name is None:
+                        raw_car = (row.get("car_name") or "").strip()
+                        if raw_car:
+                            car_name = raw_car
+
+                    raw_spline = row.get("normalized_spline_pos")
+                    if raw_spline:
+                        try:
+                            spline = float(raw_spline)
+                        except ValueError:
+                            spline = None
+                        if spline is not None:
+                            min_spline = spline if min_spline is None else min(min_spline, spline)
+                            max_spline = spline if max_spline is None else max(max_spline, spline)
+
+                    raw = row.get("lap_time_s")
+                    if raw is None or raw == "":
+                        continue
+                    try:
+                        lap_time = float(raw)
+                    except ValueError:
+                        continue
+                    if 0.0 < lap_time <= 600.0 and (best_guess is None or lap_time > best_guess):
+                        best_guess = lap_time
+        except OSError:
+            return None, None, None, False
+        is_complete = (
+            best_guess is not None
+            and min_spline is not None
+            and max_spline is not None
+            and min_spline <= 0.10
+            and max_spline >= 0.95
+        )
+        return best_guess, track_name, car_name, is_complete
+
+    def _count_feature_rows(self, lap_number: int) -> int:
+        features_path = Path(self.config.output_dir) / f"lap_{lap_number:03d}_features.csv"
+        if not features_path.exists():
+            return 0
+        count = 0
+        try:
+            with features_path.open("r", encoding="utf-8", newline="") as fp:
+                reader = csv.reader(fp)
+                next(reader, None)  # header
+                for _ in reader:
+                    count += 1
+        except OSError:
+            return 0
+        return count
 
     def _load_external_baseline(self) -> None:
         if self.config.baseline_mode != "external":
@@ -414,6 +530,8 @@ class CoachingApp:
             delta_to_best_lap_s=result.delta_to_best_lap_s,
             summary=result.summary,
             features_count=len(lap_features),
+            track_name=(self._last_track_name if self._last_track_name != "-" else None),
+            car_name=(self._last_car_name if self._last_car_name != "-" else None),
         )
         benchmark_result = self.benchmark_analyzer.compare_lap(
             lap_number=lap_number,

@@ -116,6 +116,8 @@ class DashboardState:
         delta_to_best_lap_s: float,
         summary: List[str],
         features_count: int,
+        track_name: str | None = None,
+        car_name: str | None = None,
     ) -> None:
         with self._lock:
             self.recent_laps.appendleft(
@@ -126,6 +128,8 @@ class DashboardState:
                     "delta_to_best_lap_s": round(delta_to_best_lap_s, 3),
                     "summary": list(summary),
                     "features_count": features_count,
+                    "track_name": track_name,
+                    "car_name": car_name,
                 }
             )
 

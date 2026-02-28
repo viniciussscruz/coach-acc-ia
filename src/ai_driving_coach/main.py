@@ -5,16 +5,19 @@ from pathlib import Path
 
 from ai_driving_coach.app import CoachingApp
 from ai_driving_coach.config import AppConfig
+from ai_driving_coach.runtime_logging import configure_runtime_log
 
 
 def main() -> None:
+    log_file = Path(os.getenv("AIDC_LOG_FILE", "logs/aidc.log").strip() or "logs/aidc.log")
+    log_path = configure_runtime_log(log_file)
     provider_mode = os.getenv("AIDC_PROVIDER", "mock").strip().lower()
     acc_poll_hz = int(os.getenv("AIDC_ACC_POLL_HZ", "60"))
     acc_max_idle_seconds = float(os.getenv("AIDC_ACC_MAX_IDLE_S", "0"))
     replay_file = os.getenv("AIDC_REPLAY_FILE", "").strip()
     replay_speed = float(os.getenv("AIDC_REPLAY_SPEED", "1.0"))
     tick_limit = int(os.getenv("AIDC_TICK_LIMIT", "0"))
-    capture_heartbeat = os.getenv("AIDC_CAPTURE_HEARTBEAT", "1") != "0"
+    capture_heartbeat = os.getenv("AIDC_CAPTURE_HEARTBEAT", "0") != "0"
     capture_heartbeat_every_ticks = int(os.getenv("AIDC_CAPTURE_HEARTBEAT_EVERY", "120"))
     baseline_mode = os.getenv("AIDC_BASELINE_MODE", "session_best").strip().lower()
     reference_features_path = os.getenv("AIDC_REFERENCE_FEATURES_PATH", "").strip()
@@ -40,7 +43,8 @@ def main() -> None:
         f"capture_heartbeat={capture_heartbeat} every={capture_heartbeat_every_ticks} "
         f"baseline={baseline_mode} overlay={overlay_enabled} "
         f"dashboard={enable_dashboard}@{dashboard_host}:{dashboard_port} "
-        f"benchmark={benchmark_condition}"
+        f"benchmark={benchmark_condition} "
+        f"log_file={log_path}"
     )
     app = CoachingApp(
         AppConfig(

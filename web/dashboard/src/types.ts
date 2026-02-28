@@ -70,6 +70,8 @@ export interface LapResult {
   lap_time_s?: number;
   is_best_lap?: boolean;
   delta_to_best_lap_s?: number;
+  track_name?: string | null;
+  car_name?: string | null;
   summary?: string[];
   features_count?: number;
   sectors?: NumberMap;

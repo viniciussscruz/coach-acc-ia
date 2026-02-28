@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { deltaClass, n, readSector, severityClass } from "./format";
+import { deltaClass, deltaTime, lapTime, n, readSector, severityClass } from "./format";
 import { drawTrackMap } from "./map";
 import { INITIAL_STATE, type DashboardApiState, type NumberMap } from "./types";
 
@@ -15,6 +15,8 @@ export function App(): JSX.Element {
   const [connected, setConnected] = useState<boolean>(true);
   const [theme, setTheme] = useState<"dark" | "light">("light");
   const [mapMode, setMapMode] = useState<string>("-");
+  const [trackFilter, setTrackFilter] = useState<string>("all");
+  const [carFilter, setCarFilter] = useState<string>("all");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -71,6 +73,46 @@ export function App(): JSX.Element {
     : "dashboard desconectado";
   const fuelLaps = lastTick.fuel_estimated_laps ?? lastTick.laps_remaining ?? null;
   const fuelLow = fuelLaps != null && Number(fuelLaps) <= 5.0;
+
+  const trackOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        data.recent_laps
+          .map((lap) => (lap.track_name ?? "").trim())
+          .filter((name) => name.length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [data.recent_laps]);
+
+  const carOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        data.recent_laps
+          .map((lap) => (lap.car_name ?? "").trim())
+          .filter((name) => name.length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [data.recent_laps]);
+
+  useEffect(() => {
+    if (trackFilter !== "all" && !trackOptions.includes(trackFilter)) {
+      setTrackFilter("all");
+    }
+  }, [trackFilter, trackOptions]);
+
+  useEffect(() => {
+    if (carFilter !== "all" && !carOptions.includes(carFilter)) {
+      setCarFilter("all");
+    }
+  }, [carFilter, carOptions]);
+
+  const filteredLaps = useMemo(() => {
+    return data.recent_laps.filter((lap) => {
+      const trackOk = trackFilter === "all" || (lap.track_name ?? "") === trackFilter;
+      const carOk = carFilter === "all" || (lap.car_name ?? "") === carFilter;
+      return trackOk && carOk;
+    });
+  }, [carFilter, data.recent_laps, trackFilter]);
 
   return (
     <main className="app-shell">
@@ -133,31 +175,31 @@ export function App(): JSX.Element {
                 <th>Melhor volta</th>
                 <td>
                   {timing.best_lap_time_s != null
-                    ? `${n(timing.best_lap_time_s, 3)}s (L${timing.best_lap_number ?? "-"})`
+                    ? `${lapTime(timing.best_lap_time_s, 3)} (L${timing.best_lap_number ?? "-"})`
                     : "-"}
                 </td>
               </tr>
               <tr>
                 <th>Volta teorica</th>
-                <td>{timing.theoretical_best_s != null ? `${n(timing.theoretical_best_s, 3)}s` : "-"}</td>
+                <td>{timing.theoretical_best_s != null ? lapTime(timing.theoretical_best_s, 3) : "-"}</td>
               </tr>
               <tr>
                 <th>Setor 1 best</th>
-                <td>{n(valueFromSectorMap(timing.best_sector_times, 1), 3)}s</td>
+                <td>{lapTime(valueFromSectorMap(timing.best_sector_times, 1), 3)}</td>
               </tr>
               <tr>
                 <th>Setor 2 best</th>
-                <td>{n(valueFromSectorMap(timing.best_sector_times, 2), 3)}s</td>
+                <td>{lapTime(valueFromSectorMap(timing.best_sector_times, 2), 3)}</td>
               </tr>
               <tr>
                 <th>Setor 3 best</th>
-                <td>{n(valueFromSectorMap(timing.best_sector_times, 3), 3)}s</td>
+                <td>{lapTime(valueFromSectorMap(timing.best_sector_times, 3), 3)}</td>
               </tr>
               <tr>
                 <th>Benchmark</th>
                 <td>
                   {benchmark.lap_time_s != null
-                    ? `${n(benchmark.lap_time_s, 3)}s (${benchmark.condition ?? "-"})`
+                    ? `${lapTime(benchmark.lap_time_s, 3)} (${benchmark.condition ?? "-"})`
                     : "-"}
                 </td>
               </tr>
@@ -213,7 +255,32 @@ export function App(): JSX.Element {
         <article className="panel panel-laps">
           <header className="panel-head">
             <h2>Tabela De Tempos</h2>
+            <span>{filteredLaps.length} voltas</span>
           </header>
+          <div className="laps-toolbar">
+            <label className="filter-field">
+              <span>Pista</span>
+              <select value={trackFilter} onChange={(event) => setTrackFilter(event.target.value)}>
+                <option value="all">Todas</option>
+                {trackOptions.map((trackName) => (
+                  <option key={trackName} value={trackName}>
+                    {trackName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="filter-field">
+              <span>Carro</span>
+              <select value={carFilter} onChange={(event) => setCarFilter(event.target.value)}>
+                <option value="all">Todos</option>
+                {carOptions.map((carName) => (
+                  <option key={carName} value={carName}>
+                    {carName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <table className="laps-table">
             <thead>
               <tr>
@@ -227,22 +294,22 @@ export function App(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {data.recent_laps.length === 0 && (
+              {filteredLaps.length === 0 && (
                 <tr>
                   <td colSpan={7}>Sem voltas concluidas</td>
                 </tr>
               )}
-              {data.recent_laps.map((lap, idx) => (
+              {filteredLaps.map((lap, idx) => (
                 <tr key={`lap-${idx}-${lap.lap_number ?? idx}`} className={lap.is_best_lap ? "best-row" : ""}>
                   <td>
                     <span className="lap-badge">{lap.lap_number ?? "-"}</span>
                   </td>
-                  <td>{n(valueFromSectorMap(lap.sectors, 1), 3)}</td>
-                  <td>{n(valueFromSectorMap(lap.sectors, 2), 3)}</td>
-                  <td>{n(valueFromSectorMap(lap.sectors, 3), 3)}</td>
-                  <td className={lap.is_best_lap ? "ok" : ""}>{n(lap.lap_time_s, 3)}</td>
-                  <td className={deltaClass(lap.delta_to_best_lap_s)}>{n(lap.delta_to_best_lap_s, 3)}</td>
-                  <td className={deltaClass(lap.benchmark_gap_s)}>{n(lap.benchmark_gap_s, 3)}</td>
+                  <td>{lapTime(valueFromSectorMap(lap.sectors, 1), 3)}</td>
+                  <td>{lapTime(valueFromSectorMap(lap.sectors, 2), 3)}</td>
+                  <td>{lapTime(valueFromSectorMap(lap.sectors, 3), 3)}</td>
+                  <td className={lap.is_best_lap ? "ok" : ""}>{lapTime(lap.lap_time_s, 3)}</td>
+                  <td className={deltaClass(lap.delta_to_best_lap_s)}>{deltaTime(lap.delta_to_best_lap_s, 3)}</td>
+                  <td className={deltaClass(lap.benchmark_gap_s)}>{deltaTime(lap.benchmark_gap_s, 3)}</td>
                 </tr>
               ))}
             </tbody>
